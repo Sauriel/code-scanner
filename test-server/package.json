@@ -1,0 +1,23 @@
+{
+  "name": "code-scanner-test-server",
+  "version": "1.0.0",
+  "description": "Ein kleiner Express-Testserver für die Code-Scanner-App.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "express",
+    "barcode",
+    "scanner",
+    "test-server"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}
