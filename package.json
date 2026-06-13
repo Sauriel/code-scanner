@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:update": "bash scripts/update-android.sh"
   },
   "dependencies": {
     "@capacitor-mlkit/barcode-scanning": "^8.1.0",

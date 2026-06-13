@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PluginListenerHandle } from "@capacitor/core";
+import {
+	Capacitor,
+	CapacitorHttp,
+	type PluginListenerHandle,
+} from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import {
 	BarcodeFormat,
@@ -69,11 +73,43 @@ function responseIsOk(body: string) {
 	return false;
 }
 
+function responseBodyToText(data: unknown) {
+	if (typeof data === "string") return data;
+	if (data === null || data === undefined) return "";
+	try {
+		return JSON.stringify(data, null, 2);
+	} catch {
+		return String(data);
+	}
+}
+
+function formatSendError(error: unknown, url: string) {
+	const message = error instanceof Error ? error.message : String(error);
+	const details = [
+		message || "Unbekannter Fehler beim Senden des Barcodes.",
+		"",
+		`URL: ${url}`,
+		`Plattform: ${Capacitor.getPlatform()}`,
+		`App-Origin: ${globalThis.location?.origin ?? "unbekannt"}`,
+	];
+
+	if (message === "Failed to fetch") {
+		details.push(
+			"",
+			"Hinweis: 'Failed to fetch' kommt bei WebView/fetch oft durch CORS/Preflight. curl prüft CORS nicht. Die App nutzt jetzt CapacitorHttp für native Requests; falls der Fehler bleibt, ist es eher DNS/Erreichbarkeit vom Handy aus.",
+		);
+	}
+
+	return details.join("\n");
+}
+
 function App() {
 	const [screen, setScreen] = useState<Screen>("url");
 	const [serverUrl, setServerUrl] = useState("");
 	const [urlError, setUrlError] = useState("");
 	const [sendState, setSendState] = useState<SendState>("idle");
+	const [lastSendError, setLastSendError] = useState("");
+	const [isSendErrorOpen, setIsSendErrorOpen] = useState(false);
 	const [lastScan, setLastScan] = useState<{
 		content: string;
 		type: string;
@@ -107,20 +143,42 @@ function App() {
 		recentScans.current.set(key, now);
 		setLastScan({ content, type });
 		setSendState("sending");
+		setLastSendError("");
+		setIsSendErrorOpen(false);
 
 		try {
-			const response = await fetch(serverUrlRef.current, {
-				method: "POST",
+			const requestUrl = serverUrlRef.current;
+			const response = await CapacitorHttp.post({
+				url: requestUrl,
 				headers: {
 					"Content-Type": "application/json",
 					Accept: "application/json, text/plain, */*",
 				},
-				body: JSON.stringify({ content, type }),
+				data: { content, type },
+				responseType: "text",
+				connectTimeout: 10_000,
+				readTimeout: 10_000,
 			});
-			const body = await response.text();
-			setSendState(response.ok && responseIsOk(body) ? "ok" : "not-ok");
+			const body = responseBodyToText(response.data);
+			const isHttpOk = response.status >= 200 && response.status < 300;
+			if (isHttpOk && responseIsOk(body)) {
+				setSendState("ok");
+				return;
+			}
+
+			const responseSummary = isHttpOk
+				? "Server-Antwort war nicht OK."
+				: `HTTP ${response.status}`;
+			setLastSendError(
+				body.trim()
+					? `${responseSummary}\n\nURL: ${requestUrl}\n\nAntwort:\n${body.trim()}`
+					: `${responseSummary}\n\nURL: ${requestUrl}`,
+			);
+			setSendState("not-ok");
 		} catch (error) {
+			const requestUrl = serverUrlRef.current;
 			console.error("Fehler beim Senden des Barcodes", error);
+			setLastSendError(formatSendError(error, requestUrl));
 			setSendState("error");
 		}
 	}, []);
@@ -214,14 +272,27 @@ function App() {
 		await stopScanner();
 		setScreen("url");
 		setSendState("idle");
+		setLastSendError("");
+		setIsSendErrorOpen(false);
 	};
 
 	if (screen === "scanner") {
+		const hasSendError =
+			Boolean(lastSendError) &&
+			(sendState === "error" || sendState === "not-ok");
+
 		return (
 			<main className="scanner-screen barcode-scanner-modal">
-				<div
+				<button
 					className={`status-dot ${sendState}`}
-					aria-label={`Sendestatus: ${sendState}`}
+					type="button"
+					onClick={() => {
+						if (hasSendError) setIsSendErrorOpen(true);
+					}}
+					disabled={!hasSendError}
+					aria-label={
+						hasSendError ? "Sendefehler anzeigen" : `Sendestatus: ${sendState}`
+					}
 				/>
 				<header className="scanner-header">
 					<button className="secondary-button" type="button" onClick={goBack}>
@@ -254,6 +325,32 @@ function App() {
 
 				{scannerError ? (
 					<p className="error scanner-error">{scannerError}</p>
+				) : null}
+
+				{isSendErrorOpen && hasSendError ? (
+					<div
+						className="error-dialog-backdrop"
+						role="presentation"
+						onClick={() => setIsSendErrorOpen(false)}
+					>
+						<section
+							className="error-dialog"
+							role="dialog"
+							aria-modal="true"
+							aria-labelledby="send-error-title"
+							onClick={(event) => event.stopPropagation()}
+						>
+							<h2 id="send-error-title">Letzter Server-Fehler</h2>
+							<pre>{lastSendError}</pre>
+							<button
+								className="primary-button"
+								type="button"
+								onClick={() => setIsSendErrorOpen(false)}
+							>
+								Schließen
+							</button>
+						</section>
+					</div>
 				) : null}
 			</main>
 		);
